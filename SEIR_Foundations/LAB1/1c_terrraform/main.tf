@@ -3,6 +3,8 @@
 ############################################
 locals {
   name_prefix = var.project_name
+  inbound_ports_ec2 = [80, 22]
+  db_port = 3306
 }
 
 ############################################
@@ -144,7 +146,24 @@ resource "aws_security_group" "chewbacca_ec2_sg01" {
   vpc_id      = aws_vpc.chewbacca_vpc01.id
 
   # TODO: student adds inbound rules (HTTP 80, SSH 22 from their IP)
+  dynamic "ingress" {
+    for_each = local.inbound_ports_ec2 
+      content {
+        from_port = ingress.value
+        to_port = ingress.value
+        cidr_blocks = var.public_subnet_cidrs
+        protocol = "TCP"
+      }
+    }
+
   # TODO: student ensures outbound allows DB port to RDS SG (or allow all outbound)
+  egress {
+    from_port = local.db_port
+    to_port = local.db_port
+    protocol = "TCP"
+    cidr_blocks = var.public_subnet_cidrs
+    security_groups = [aws_security_group.chewbacca_rds_sg01.id]
+  }
 
   tags = {
     Name = "${local.name_prefix}-ec2-sg01"
@@ -158,6 +177,14 @@ resource "aws_security_group" "chewbacca_rds_sg01" {
   vpc_id      = aws_vpc.chewbacca_vpc01.id
 
   # TODO: student adds inbound MySQL 3306 from aws_security_group.chewbacca_ec2_sg01.id
+
+ ingress {
+    from_port = local.db_port
+    to_port = local.db_port
+    cidr_blocks = var.public_subnet_cidrs
+    protocol = "TCP"
+    security_groups = [aws_security_group.chewbacca_ec2_sg01.id]
+  }
 
   tags = {
     Name = "${local.name_prefix}-rds-sg01"
