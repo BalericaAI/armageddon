@@ -1,0 +1,185 @@
+Lab 2B-Honors++
+CloudFront Validators, RefreshHit, and Conditional Requests
+What this lab teaches (in one sentence)
+
+A CDN can revalidate cached objects without fully refetching them — and that’s not a bug.
+
+1. Mental Model (Teach This First)
+CloudFront cache outcomes you care about:
+
+| x-cache value                | Meaning                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------ |
+| `Hit from cloudfront`        | Served entirely from cache                                               |
+| `Miss from cloudfront`       | Fetched from origin                                                      |
+| `RefreshHit from cloudfront` | Cached object existed, but CloudFront **revalidated** it with the origin |
+| `Error from cloudfront`      | Origin or edge error                                                     |
+
+
+Key insight
+RefreshHit means:
+    CloudFront did go to the origin
+    But used conditional headers (If-None-Match, If-Modified-Since)
+    Origin said 304 Not Modified
+    CDN reused cached body
+
+➡️ Lower bandwidth than a Miss, higher latency than a Hit
+
+This is normal when:
+    TTL expires
+    Cache-Control: max-age is short
+    Origin sends validators (ETag / Last-Modified)
+
+2. Required App Changes (EC2 Origin)
+Students must modify one static or semi-static endpoint (HTML or JSON) so it:
+Sends validators
+At least one of:
+    ETag
+    Last-Modified
+
+Example (conceptual)
+    GET /static/index.html
+    Response headers:
+
+    Cache-Control: public, max-age=30
+    ETag: "chewie-v1"
+
+3. CloudFront Setup Assumptions
+This lab assumes:
+    Origin-driven caching (Lab 2B-Honors)
+    Managed policy: UseOriginCacheControlHeaders
+    TTL = controlled by origin
+    No invalidation yet
+
+4. The Failure Injection (Instructor / Santa)
+Injection A — “Why am I seeing RefreshHit every time?”
+Steps:
+    1) Set origin to:
+
+
+    Cache-Control: public, max-age=5
+    ETag: "chewie-v1"
+
+Do not change content
+Students repeatedly curl every ~6–10 seconds
+
+5. Student Investigation (Required)
+Step 1 — Observe headers
+
+    curl -i https://chewbacca-growl.com/static/index.html | sed -n '1,25p'
+
+Repeat after TTL expires.
+Expected sequence:
+    First request → Miss
+    Next few within TTL → Hit
+    After TTL → RefreshHit
+
+Step 2 — Identify validators
+Students must find:
+    ETag or
+    Last-Modified
+
+Step 3 — Explain RefreshHit (written)
+Students must state:
+
+    “CloudFront had a cached copy, but TTL expired.
+    It sent a conditional request to the origin using validators.
+    The origin returned 304 Not Modified, so CloudFront reused the cached body.”
+
+If they say “CloudFront is broken” → ❌
+
+6. Proving It’s NOT a Full Miss
+Change nothing, wait for TTL
+
+    sleep 6
+    curl -i https://chewbacca-growl.com/static/index.html
+
+Evidence to collect:
+    x-cache: RefreshHit from cloudfront
+    Response body unchanged
+    Latency slightly higher than Hit
+
+Explain:
+    Bandwidth saved
+    Origin load reduced
+    Still correct behavior
+
+7. Second Injection — “Why won’t my change show up?”
+Injection B — Change content BUT forget ETag
+Instructor changes content but:
+    Keeps same ETag
+    Or forgets to update validators
+
+Expected:
+    CloudFront keeps getting 304
+    Users see stale content
+    RefreshHit continues forever
+
+Student Fix Options (must justify one)
+
+| Fix                  | When appropriate        |
+| -------------------- | ----------------------- |
+| Update ETag          | Correct fix             |
+| Update Last-Modified | Acceptable              |
+| Invalidate object    | Emergency only          |
+| Increase TTL         | If content truly stable |
+
+
+8. Controlled Invalidation (Tie-in to Honors+)
+Now students are allowed to invalidate one path:
+
+    aws cloudfront create-invalidation \
+      --distribution-id <DIST_ID> \
+      --paths "/static/index.html"
+
+
+You must explain:
+    Why invalidation works
+    Why it’s not the preferred fix
+    Why updating validators is better
+
+
+9. Log Interpretation (Advanced)
+If ALB access logs are enabled
+Students should observe:
+    Conditional requests (If-None-Match)
+    304 responses from origin
+    Lower response sizes
+
+If CloudFront standard logs are enabled (optional)
+    Explain fields:
+    x-edge-result-type = RefreshHit
+    sc-status = 304
+
+10. Grading Rubric (Honors++)
+Pass (must have all)
+    Correct explanation of RefreshHit
+    Evidence of validators
+    Correct interpretation of headers
+    Did NOT invalidate blindly
+
+Honors++
+  Explains tradeoff between:
+    TTL length
+    Revalidation frequency
+    Latency vs freshness
+  Chooses correct fix for Injection B
+
+Auto-Fail
+    “Invalidate everything”
+    “CloudFront bug”
+    No evidence cited
+
+11. Add to Auto-IR (Bonus)
+If Auto-IR is enabled:
+    Bedrock report may say: “CloudFront cache anomaly”
+    Student must override with:
+        “Observed RefreshHit behavior due to short TTL + validators; system operating as designed.”
+
+This reinforces the ethics rule:
+    --> AI summarizes. Humans interpret.
+
+Deliverables:
+12. One-Paragraph Takeaway (You Must Write)
+    --> “What does RefreshHit mean, and why is it often better than a Miss?”
+If they can answer this cleanly, they’re ahead of most working engineers.
+
